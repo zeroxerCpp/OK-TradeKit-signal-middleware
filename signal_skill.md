@@ -9,7 +9,7 @@ description: >
   or any request to assess market conditions and produce a trade recommendation.
   Collects multi-timeframe market data via okx-trade-cli, computes trend/oscillator/volume
   signals, and outputs a structured directional recommendation with entry zone, TP, and SL.
-  Data collection is read-only (no credentials needed); order execution requires okx-cex-trade.
+  Data collection is read-only (no credentials needed); order execution requires okx-trade-mcp.
 license: MIT
 author: ok-assistance
 version: 1.0.0
@@ -32,7 +32,7 @@ signals using the OK-Assistance signal engine, and returns a structured directio
 recommendation with entry zone, take-profit, and stop-loss.
 
 **Note:** Data collection is read-only and requires no API credentials. Order execution
-requires `okx-cex-trade` and valid API credentials.
+requires `okx-trade-mcp` and valid API credentials.
 
 ---
 
@@ -415,14 +415,127 @@ Always confirm with your own judgment.
 
 ### Step 5: Offer execution
 
-Ask:
+Ask the user:
 
-> ⚠️ Signal generated at `<timestamp>`. Market conditions may have changed.
-> If more than **5 minutes** have passed since data collection, re-run analysis before executing.
+> ⚠️ Signal generated at `<timestamp>`. If more than **5 minutes** have passed since data collection, re-run analysis first.
 >
 > Trade this signal? Reply: `yes demo|live <USDT amount> [max <X>% of account]`
 >
 > Recommended position size: ≤ 2% of account per trade unless signal strength is **Strong**.
+
+---
+
+When user confirms execution, follow this **complete 6-step execution chain**:
+
+> ℹ️ Market orders are not guaranteed to fill at the exact signal price. Monitor the position after entry.
+
+#### Execution Step E1: Check account balance
+
+```bash
+okx account balance
+```
+
+- MCP tool: `account_get_balance`
+- Extract `availEq` (available equity in USDT) for the trading account
+- If `availEq` < requested USDT amount → abort and notify: `⚠️ Insufficient balance. Available: <availEq> USDT`
+- Recalculate actual `position_size_usdt` if user said "max X% of account":
+  ```
+  position_size_usdt = availEq × X%
+  ```
+
+#### Execution Step E2: Check current positions
+
+```bash
+okx swap positions
+```
+
+- MCP tool: `swap_get_positions`
+- If an open position already exists for the same `instId` and same direction → warn:
+  `⚠️ Existing <direction> position detected (size: <sz>, entry: <avgPx>). Adding to position may increase risk.`
+- If opposite direction position exists → ask user to confirm close before opening new
+
+#### Execution Step E3: Set leverage
+
+```bash
+okx swap leverage --instId <instId> --lever <X> --mgnMode cross
+```
+
+- MCP tool: `swap_set_leverage`
+- Use leverage from the signal report's Entry Plan, or default to **5x** if not specified
+- For isolated margin mode, add `--posSide long` or `--posSide short` as appropriate
+- Confirm leverage was set before proceeding
+
+#### Execution Step E4: Calculate contract size and place entry order
+
+Calculate number of contracts:
+
+```
+contracts = floor(position_size_usdt / (last_price × ctVal))
+```
+
+- Retrieve `ctVal` from `okx market ticker <instId>` or instrument info
+- Minimum 1 contract; if `contracts` < 1 → abort: `⚠️ Position size too small for 1 contract at current price`
+
+Place market entry order:
+
+```bash
+# LONG entry
+okx swap place --instId <instId> --side buy --ordType market --sz <contracts> --posSide long --tdMode cross
+
+# SHORT entry
+okx swap place --instId <instId> --side sell --ordType market --sz <contracts> --posSide short --tdMode cross
+```
+
+- MCP tool: `swap_place_order`
+- Record the returned `ordId` and filled `avgPx` for next step
+
+#### Execution Step E5: Attach TP / SL (OCO algo order)
+
+After entry is confirmed filled, place an OCO take-profit + stop-loss order:
+
+```bash
+# LONG position TP/SL
+okx swap place --instId <instId> --side sell --ordType oco \
+  --tpTriggerPx <tp_price> --tpOrdPx -1 \
+  --slTriggerPx <sl_price> --slOrdPx -1 \
+  --sz <contracts> --posSide long --tdMode cross
+
+# SHORT position TP/SL
+okx swap place --instId <instId> --side buy --ordType oco \
+  --tpTriggerPx <tp_price> --tpOrdPx -1 \
+  --slTriggerPx <sl_price> --slOrdPx -1 \
+  --sz <contracts> --posSide short --tdMode cross
+```
+
+- MCP tool: `swap_place_order` with `ordType: "oco"`
+- Use `tp_price` and `sl_price` from the signal report's Entry Plan
+- `-1` for `tpOrdPx` / `slOrdPx` means execute at market price when triggered
+- If OCO placement fails → immediately place a stop-loss-only conditional order as fallback
+
+#### Execution Step E6: Output execution summary
+
+```
+═══════════════════════════════════════════
+✅ Trade Executed
+═══════════════════════════════════════════
+📈 Instrument  : <instId>
+📊 Direction   : LONG / SHORT
+💰 Entry Price : <avgPx> USDT
+📦 Size        : <contracts> contracts (<position_size_usdt> USDT notional)
+⚙️  Leverage    : <X>x (<mgnMode>)
+
+─── Exit Orders ───────────────────────────
+🎯 Take-Profit : <tp_price> USDT  (+<tp_pct>%)
+🛡️  Stop-Loss   : <sl_price> USDT  (−<sl_pct>%)
+⚖️  R:R Ratio   : <rr>
+─────────────────────────────────────────
+🆔 Entry ordId : <ordId>
+🆔 OCO algOId  : <algoId>
+═══════════════════════════════════════════
+```
+
+- Remind the user: "Monitor the position and adjust as market conditions evolve."
+- If `demo` mode was selected: prefix all output with `[DEMO]` and do **not** call any execution tools
 
 ---
 
