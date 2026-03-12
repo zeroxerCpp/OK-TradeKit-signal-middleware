@@ -54,10 +54,10 @@ requires `okx-cex-trade` and valid API credentials.
 Collect market data and compute signals:
 
 ```bash
-# Multi-timeframe candles
-okx market candles BTC-USDT-SWAP --bar 1D --limit 60 --json
-okx market candles BTC-USDT-SWAP --bar 4H --limit 60 --json
-okx market candles BTC-USDT-SWAP --bar 1H --limit 60 --json
+# Multi-timeframe candles (use confirmed candles only; confirm == "1")
+okx market candles BTC-USDT-SWAP --bar 1D --limit 100 --json   # Ichimoku needs 78+
+okx market candles BTC-USDT-SWAP --bar 4H --limit 200 --json   # MACD needs 35+, ADX 28+, Ichimoku 78+
+okx market candles BTC-USDT-SWAP --bar 1H --limit 200 --json   # BB/VolMA20 need 20+, SL swing 10+
 
 # Market context
 okx market ticker BTC-USDT-SWAP --json
@@ -73,12 +73,12 @@ okx market trades BTC-USDT-SWAP --limit 50 --json
 
 All commands are READ-only market data queries.
 
-| # | Command | Description |
-|---:|:---|:---|
-| 1 | `okx market candles <instId> --bar 1D --limit 60` | Daily OHLCV (trend bias, BBands, MACD) |
-| 2 | `okx market candles <instId> --bar 4H --limit 60` | 4H OHLCV (entry timing, EMA, RSI) |
-| 3 | `okx market candles <instId> --bar 1H --limit 60` | 1H OHLCV (entry confirmation, volume) |
-| 4 | `okx market candles <instId> --bar 15m --limit 60` | 15m OHLCV (intraday entry precision) |
+| # | Command | Description | Min confirmed candles needed |
+|---:|:---|:---|:---|
+| 1 | `okx market candles <instId> --bar 1D --limit 100` | Daily OHLCV (trend bias, BBands, MACD) | **100** — Ichimoku needs 52 + warmup; MACD needs 35+ |
+| 2 | `okx market candles <instId> --bar 4H --limit 200` | 4H OHLCV (entry timing, EMA, RSI, ADX, SuperTrend) | **200** — ADX(14) needs 28+; SuperTrend(10,3) needs 10+; MACD(12,26,9) needs 35+; Ichimoku(9,26,52) needs 52+ |
+| 3 | `okx market candles <instId> --bar 1H --limit 200` | 1H OHLCV (entry confirmation, volume, BB, RSI) | **200** — BB(20) needs 20+; RSI(14) needs 15+; SL swing needs 10 confirmed |
+| 4 | `okx market candles <instId> --bar 15m --limit 60` | 15m OHLCV (intraday entry precision) | **60** — EMA/RSI/BB warmup |
 | 5 | `okx market ticker <instId>` | Latest price, 24h high/low/vol |
 | 6 | `okx market funding-rate <instId>` | Current + next funding rate (sentiment) |
 | 7 | `okx market funding-rate <instId> --history --limit 20` | Historical funding rate trend |
@@ -310,9 +310,9 @@ Always display position size as both `% of account` and `estimated USDT` in the 
 ### Step 2: Collect market data
 
 ```bash
-okx market candles <instId> --bar 1D --limit 60 --json
-okx market candles <instId> --bar 4H --limit 60 --json
-okx market candles <instId> --bar 1H --limit 60 --json
+okx market candles <instId> --bar 1D --limit 100 --json   # needs ≥78 confirmed (Ichimoku)
+okx market candles <instId> --bar 4H --limit 200 --json   # needs ≥35 confirmed (MACD), ≥78 (Ichimoku), ≥28 (ADX)
+okx market candles <instId> --bar 1H --limit 200 --json   # needs ≥20 confirmed (BB/Vol MA20), ≥10 (SL swing)
 okx market ticker <instId> --json
 okx market funding-rate <instId> --json
 okx market funding-rate <instId> --history --limit 20 --json
@@ -481,6 +481,29 @@ Candle columns: `[ts, open, high, low, close, vol, volCcy, volCcyQuote, confirm]
 
 ⚠️ Only use candles where confirm == "1". The last (most recent) candle may still be forming and should be excluded from all indicator calculations.
 
+### Minimum Confirmed Candle Requirements
+
+All counts below refer to **confirmed** candles (`confirm == "1"`) only.
+Always request more data than the minimum (warmup factor) so that EMA seeds are stable.
+
+| Indicator | Formula dependency | Absolute minimum | Recommended `--limit` |
+|:---|:---|:---:|:---:|
+| EMA(9) | seed on first 9 bars | **9** | 60 |
+| EMA(21) | seed on first 21 bars | **21** | 60 |
+| RSI(14) | 15 bars (14 diffs) | **15** | 60 |
+| BB(20, 2) | SMA + σ on 20 bars | **20** | 60 |
+| KDJ(9, 3, 3) | 9-bar H/L range | **9** | 60 |
+| ATR(10) / SuperTrend(10, 3) | EMA of TR, 10 bars | **10** | 60 |
+| ATR(14) | EMA of TR, 14 bars | **14** | 60 |
+| MACD(12, 26, 9) | EMA26 (26 bars) + signal EMA9 (9 MACD values) | **35** | 200 (EMA warmup important) |
+| ADX(14) | Wilder smoothing of DX over 14 bars × 2 passes | **28** | 200 |
+| Ichimoku(9, 26, 52) | Senkou Span B = 52-bar H/L midpoint; cloud displaced 26 bars forward | **78** | 200 |
+| SL swing (1H, 10-candle lookback) | last 10 confirmed 1H lows/highs | **10** | 200 |
+| Volume MA(20) | SMA of vol over 20 bars | **20** | 200 |
+
+> **Rule of thumb:** always use `--limit 200` for 4H and 1H feeds, `--limit 100` for 1D.
+> Insufficient data (< absolute minimum for a given indicator) → skip that signal and note `Insufficient history for <indicator>` in the Key Evidence section.
+
 ---
 
 ## Notes
@@ -489,4 +512,51 @@ Candle columns: `[ts, open, high, low, close, vol, volCcy, volCcyQuote, confirm]
 - `--json` returns raw OKX API v5 data for precise computation.
 - Skill does not store state — always collect fresh data.
 - Rate limit: 20 requests per 2 seconds per IP.
-- Do not provide code unless specifically requested by the user.
+
+### Signal Engine Library
+
+All complex indicator computations, scoring rules, market-state detection,
+and Entry/SL/TP calculations are implemented in **`signal_engine.py`**
+(located in the same directory as this skill).
+
+#### Key public API
+
+| Call | Description |
+|------|-------------|
+| `fetch_all(inst_id)` | Pull all required OKX data via CLI; returns `MarketData` |
+| `SignalEngine(data).run()` | Compute all signals; returns `Report` |
+| `report.text` | Formatted report string (same as manual output) |
+| `report.as_dict()` | Machine-readable dict with all key values |
+
+#### Low-level indicator functions (importable)
+
+| Function | Returns |
+|----------|---------|
+| `ema_list(series, n)` | Full EMA series (list, None-padded) |
+| `ema_scalar(series, n)` | Last EMA value |
+| `sma(series, n)` | Last SMA value |
+| `macd(series, fast, slow, signal)` | `(macd, signal, hist0, hist_prev, macd_prev)` |
+| `bollinger_bands(series, n, k)` | `(mid, upper, lower)` |
+| `rsi(series, n)` | RSI scalar |
+| `kdj(highs, lows, closes, n)` | `(K, D, J)` |
+| `atr_list(highs, lows, closes, n)` | Full ATR series |
+| `supertrend(highs, lows, closes, n, mult)` | `(st_series, final_upper, final_lower)` |
+| `ichimoku(highs, lows, closes)` | `(tenkan, kijun, cloud_top, cloud_bot)` |
+| `adx(highs, lows, closes, n)` | ADX scalar |
+| `detect_market_state(candles_4h, candles_1h)` | `MarketState` with weights |
+
+#### One-liner usage
+
+```python
+from signal_engine import fetch_all, SignalEngine
+
+data   = fetch_all("BTC-USDT-SWAP")
+report = SignalEngine(data).run()
+print(report.text)
+```
+
+#### CLI usage
+
+```bash
+python3 signal_engine.py BTC-USDT-SWAP 10000
+```
