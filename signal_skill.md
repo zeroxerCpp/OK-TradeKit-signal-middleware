@@ -87,6 +87,7 @@ All commands are READ-only market data queries.
 | 10 | `okx market trades <instId> --limit 50` | Recent trades (buy/sell pressure) |
 | 11 | `okx market mark-price --instType SWAP --instId <id>` | Mark price vs last (divergence) |
 | 12 | `okx market index-ticker --instId BTC-USD` | Index price (spot reference) |
+| 13 | `okx market liquidation-orders --instType SWAP --instId <id> --state filled --limit 100` | Recent forced liquidations (size + side) |
 
 ---
 
@@ -118,9 +119,46 @@ Scoring: +1 (bullish), −1 (bearish), 0 (neutral).
 Scoring: +1 (bullish), −1 (bearish), 0 (neutral).  
 **Volume/Senti Score** = sum of 5 votes. Range: −5 to +5.
 
+### Market State Detection
+
+Before computing the final score, classify the current market state using:
+
+| Indicator | Calculation | Threshold |
+|:---|:---|:---|
+| ADX(14) | Average Directional Index on 4H candles | ADX > 25 → Trending; ADX < 20 → Ranging |
+| ATR expansion | ATR(14) on 4H vs its own MA(10) | ATR > 1.5× MA → High Volatility |
+| Volume | Latest 1H volume vs MA(20) | Volume < 0.5× MA → Low Liquidity |
+
+**ADX formula:**
+- `+DM = High − PrevHigh` (if positive, else 0)
+- `−DM = PrevLow − Low` (if positive, else 0)
+- `DX = |+DI − −DI| / |+DI + −DI| × 100`
+- `ADX = EMA(DX, 14)`
+
+**Market states and dynamic weights:**
+
+| State | Condition | Trend w | Volume/Senti w | Oscillator w | Note |
+|:---|:---|:---:|:---:|:---:|:---|
+| Trending | ADX > 25 | **0.60** | 0.25 | 0.15 | Follow the trend |
+| Ranging | ADX < 20 | 0.25 | 0.30 | **0.45** | Mean-reversion favored |
+| High Volatility | ATR > 1.5× MA | 0.35 | **0.45** | 0.20 | Sentiment/volume drives moves |
+| Low Liquidity | Volume < 0.5× MA | — | — | — | Output `LOW_CONFIDENCE`; abort calculation, skip trade |
+| Normal | Otherwise | 0.40 | 0.35 | 0.25 | Default weights |
+
+**Final Score formula (dynamic):**
+```
+Total Score = (Trend × w_trend + Oscillator × w_osc + Volume × w_vol) × 2
+```
+Where weights are selected from the table above based on detected market state.
+
+**Report addition:** Always include the detected market state in the output:
+```
+Market State : Trending (ADX = 28.4) / Ranging / High Volatility / ⚠️ LOW CONFIDENCE
+```
+
 ### Final Score & Recommendation
 
-**Total Score** = (Trend × 0.4 + Volume/Senti × 0.60) × 2 (normalized to −10..+10)
+**Total Score** = (Trend × w_trend + Oscillator × w_osc + Volume × w_vol) × 2 (normalized to −10..+10; weights selected from the preceding Market State Detection section)
 
 | Score Range | Direction | Action |
 |---:|:---:|:---|
@@ -129,6 +167,58 @@ Scoring: +1 (bullish), −1 (bearish), 0 (neutral).
 | −2.9 to +2.9 | ⚪ NEUTRAL | No trade |
 | −5.9 to −3.0 | 🟡 SHORT | Moderate sell |
 | −10 to −5.9 | 🔴 SHORT | Strong sell |
+
+### Signal Confidence Rules
+
+Each signal is scored as a continuous confidence value in `[0.0, 1.0]` rather than a binary vote.
+The directional sign (+/−) is applied separately. Final vote = `sign × confidence`.
+
+**EMA Crossover confidence:**
+| Condition | Confidence |
+|:---|:---:|
+| Crossed on the last candle only | 0.5 |
+| Confirmed for 2 consecutive candles | 0.75 |
+| Confirmed for ≥ 3 consecutive candles | 1.0 |
+
+**RSI confidence:**
+| Condition | Confidence |
+|:---|:---:|
+| RSI 30–35 (mild oversold) or 65–70 (mild overbought) | 0.5 |
+| RSI 20–29 (moderate oversold) or 70–79 | 0.75 |
+| RSI < 20 (extreme oversold) or ≥ 80 | 1.0 |
+
+**MACD confidence:**
+| Condition | Confidence |
+|:---|:---:|
+| MACD just crossed signal line | 0.5 |
+| Histogram expanding for 2 candles | 0.75 |
+| Histogram expanding for ≥ 3 candles, MACD > 0 | 1.0 |
+
+**Bollinger Band confidence:**
+| Condition | Confidence |
+|:---|:---:|
+| Price between mid and band | 0.4 |
+| Price touching band | 0.7 |
+| Price closed outside band (wick reversion) | 1.0 |
+
+**Funding Rate confidence:**
+| Condition | Confidence |
+|:---|:---:|
+| 0.01%–0.05% (mild) | 0.4 |
+| 0.05%–0.10% (elevated) | 0.75 |
+| > 0.10% (extreme) | 1.0 |
+
+**Volume Breakout confidence:**
+| Condition | Confidence |
+|:---|:---:|
+| Volume 1.5×–2× MA20 | 0.6 |
+| Volume > 2× MA20 | 1.0 |
+
+**Default:** Any signal not listed above defaults to binary 0 or 1.
+
+**Score adjustment:** Each group's raw score = `Σ (sign × confidence)` across its signals.
+Normalize to [−5, +5] by computing `(Σ(sign × confidence) / N) × 5`, where N is the number of signals in the group.
+Then apply dynamic weights as defined in Market State Detection.
 
 ## Workflow
 
@@ -152,6 +242,7 @@ okx market funding-rate <instId> --history --limit 20 --json
 okx market open-interest --instType SWAP --instId <id> --json
 okx market orderbook <instId> --sz 20 --json
 okx market trades <instId> --limit 50 --json
+okx market liquidation-orders --instType SWAP --instId <id> --state filled --limit 100 --json
 ```
 
 ### Step 3: Compute signals
@@ -168,6 +259,7 @@ For each timeframe, calculate:
 8. **OI trend** — compare latest vs 5-period average
 9. **Order Book** — sum top-10 bid vs ask depth
 10. **Trade Flow** — count buy vs sell among last 50 trades
+11. **ADX(14)** — classify market state (Trending / Ranging / High Volatility / Low Liquidity); select dynamic weights accordingly
 
 Score each signal per the tables above. Compute weighted total.
 
@@ -191,6 +283,7 @@ Oscillator     : <score>/5  (<signals>)
 Volume/Senti   : <score>/5  (<signals>)
 ─────────────────────────────────────────
 Total Score    : <score>/10
+Market State   : Trending (ADX = 28.4) / Ranging / High Volatility / ⚠️ LOW CONFIDENCE
 
 ─── Recommendation ────────────────────────
 Direction  : 🟢 LONG / 🔴 SHORT / ⚪ NEUTRAL
