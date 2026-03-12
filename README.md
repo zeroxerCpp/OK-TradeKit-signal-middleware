@@ -1,11 +1,12 @@
-# ok-assistance-trade-advice
+#OK-TradeKit-signal-middleware
+
 
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ## Overview
 
-`ok-assistance-trade-advice` is a multi-timeframe OKX perpetual/spot signal engine that
+`OK-TradeKit-signal-middleware` is a multi-timeframe OKX perpetual/spot signal engine that
 analyses market data across 1D, 4H, and 1H candle intervals.  It uses
 `okx-trade-cli` for read-only data collection (no API credentials required) and
 outputs a structured trade recommendation complete with entry zone, take-profit
@@ -95,11 +96,11 @@ computation rules and self-verification checklist.
 MIT
 
 
-# ok-assistance-trade-advice（中文翻译）
+# 基于OK Trade kit的信号引擎中间件（中文翻译）
 
 ## 概述
 
-`ok-assistance-trade-advice` 是一个多时间周期的 OKX 永续/现货信号引擎，分析 1D、4H 和 1H 的蜡烛图数据。它使用 `okx-trade-cli` 进行只读数据采集（无需 API 凭证），并输出结构化的交易建议，包含入场区间、止盈目标、止损位置以及基于风险的仓位大小建议。
+`OK-TradeKit-signal-middleware` 是一个多时间周期的 OKX 永续/现货信号引擎，基于主流信号策略，分析 1D、4H 和 1H 的蜡烛图数据。它使用 `okx-trade-cli` 进行只读数据采集（无需 API 凭证），并输出结构化的交易建议，包含入场区间、止盈目标、止损位置以及基于风险的仓位大小建议。
 
 ## 架构
 
