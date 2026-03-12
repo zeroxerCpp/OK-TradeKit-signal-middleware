@@ -43,7 +43,7 @@ def _consecutive_streak(values: List[float], reference: List[Optional[float]], a
     """
     streak = 0
     for i in range(len(values) - 1, -1, -1):
-        if reference[i] is None:
+        if i >= len(reference) or reference[i] is None:
             break
         if above and values[i] > reference[i]:
             streak += 1
@@ -173,10 +173,10 @@ class SignalEngine:
         h, l, c = self.h4[-1], self.l4[-1], self.c4[-1]
         raw = f"Close={c:,.2f} Upper={up:,.2f} Mid={mid:,.2f} Lower={low:,.2f}"
         if l <= low and c > low:  # type: ignore[operator]
-            conf = 1.0 if c < low else 0.7
+            conf = 1.0 if l < low else 0.7
             return _mk("BB 4H", raw, "Wick to lower band, close above → bullish", +1, conf)
         elif h >= up and c < up:  # type: ignore[operator]
-            conf = 1.0 if c > up else 0.7
+            conf = 1.0 if h > up else 0.7
             return _mk("BB 4H", raw, "Wick to upper band, close below → bearish", -1, conf)
         elif c > mid:
             return _mk("BB 4H", raw, "Price above mid, inside bands → mild bullish", +1, 0.4)
@@ -401,7 +401,10 @@ class SignalEngine:
             tag = ("oversold" if rsi1h < 30 else
                    "overbought" if rsi1h > 70 else "neutral")
             notes.append(f"RSI(14) 1H = {rsi1h:.1f} → {tag}")
-        notes.append(f"KDJ 4H: K={k} D={d} J={j}")
+        if k is not None:
+            notes.append(f"KDJ(9,3,3) 4H: K={k:.1f} D={d:.1f} J={j:.1f}")
+        else:
+            notes.append("KDJ(9,3,3) 4H: Insufficient data")
         return notes
 
     # ── Entry / SL / TP ───────────────────────────────────────────────────────
@@ -603,7 +606,8 @@ class SignalEngine:
             )
         cot.append(
             f"[Liquidation] {liq_sig.raw_value} → {liq_sig.condition} "
-            f"→ score: {liq_sig.vote:+.2f} (conf {liq_sig.confidence:.2f})"
+            f"→ score: {liq_sig.vote:+.2f} (conf {liq_sig.confidence:.2f}) "
+            f"[supplementary evidence only — not included in Vol/Senti score]"
         )
         for ln in liq_notes:
             cot.append(f"  {ln}")

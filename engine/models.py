@@ -172,7 +172,7 @@ class Report:
         lines.append(f"Volume/Senti   : {self.volume_senti.normalized:+.2f}/5  ({len(self.volume_senti.signals)} signals)")
         lines.append("─────────────────────────────────────────")
         lines.append(f"Total Score    : {self.total_score:+.2f}/10")
-        lines.append(f"Market State   : {self.market_state} (ADX = {self.adx_value:.1f})")
+        lines.append(f"Market State   : {self.market_state}")
         lines.append("")
         lines.append("─── Recommendation ────────────────────────")
         emoji = {"LONG": "🟢", "SHORT": "🔴", "NEUTRAL": "⚪"}.get(self.direction, "⚪")
