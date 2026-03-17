@@ -593,6 +593,35 @@ Always request more data than the minimum (warmup factor) so that EMA seeds are 
 > Insufficient data (< absolute minimum for a given indicator) → skip that signal and note `Insufficient history for <indicator>` in the Key Evidence section.
 
 ---
+### Skill: Strategy_Evolution_Expert
+**Role:** Senior Quantitative Risk & Strategy Auditor
+
+**Objective:** Analyze the outcome of the last closed trade and dynamically adjust risk parameters for the next signal to prevent "tilt" or "strategy-market mismatch."
+
+**Inputs:**
+- `Last_Trade_Data`: Realized PnL, Entry/Exit Price, Slippage (via Trade Kit `get_fills`).
+- `Market_Context`: Volatility (ATR) and Trend Strength during the trade duration.
+- `Memory_Log`: Performance of the last 5 signals from the same source.
+
+**Agent Reasoning (Inner Monologue):**
+1. **Attribution:** Was the loss due to "Bad Timing," "High Slippage," or "Trend Reversal"?
+2. **Confidence Scoring:** Is the current signal source losing edge in the present market regime (e.g., a trend-following signal in a choppy range)?
+3. **Adaptive Scaling:** Should I reduce position size or widen stop-loss buffers based on recent drawdown?
+
+**Output (Evolution Logic):**
+The Agent must output a JSON "Optimization Instruction" for the next trade:
+{
+  "performance_grade": "A | B | C | D",
+  "root_cause_analysis": "e.g., High volatility triggered premature stop-loss.",
+  "dynamic_parameters": {
+    "leverage_multiplier": 0.75, // Reduce risk after a loss
+    "stop_loss_buffer": "+0.5%", // Add breathing room for high ATR
+    "execution_type": "Limit_Post_Only" // Switch from Market to Limit to save fees
+  },
+  "strategic_advice": "Wait for a higher timeframe confirmation before the next entry."
+}
+
+
 
 ## Notes
 
@@ -632,6 +661,9 @@ and Entry/SL/TP calculations are implemented in **`signal_engine.py`**
 | `ichimoku(highs, lows, closes)` | `(tenkan, kijun, cloud_top, cloud_bot)` |
 | `adx(highs, lows, closes, n)` | ADX scalar |
 | `detect_market_state(candles_4h, candles_1h)` | `MarketState` with weights |
+
+
+
 
 #### One-liner usage
 
